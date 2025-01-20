@@ -17,6 +17,8 @@ if (!defined('ABSPATH')) {
 class Instagram_Import {
     private $chunk_size; // Will be set in constructor
     private $temp_dir;
+    private $post_type = 'instagram_post';
+    private $tag_taxonomy = 'instagram_tag';
 
     public function __construct() {
         // Set chunk size to be much smaller - 2MB
@@ -111,7 +113,7 @@ class Instagram_Import {
     }
 
     public function register_post_type() {
-        register_taxonomy('instagram_tag', 'instagram_post', array(
+        register_taxonomy($this->tag_taxonomy, $this->post_type, array(
             'labels' => array(
                 'name' => __('Instagram Tags'),
                 'singular_name' => __('Instagram Tag'),
@@ -136,10 +138,10 @@ class Instagram_Import {
             'show_admin_column' => true,
             'show_in_quick_edit' => true,
             'show_in_nav_menus' => true,
-            'rewrite' => array('slug' => 'instagram-tag')
+            'rewrite' => array('slug' => str_replace('_', '-', $this->tag_taxonomy))
         ));
 
-        register_post_type('instagram_post', array(
+        register_post_type($this->post_type, array(
             'labels' => array(
                 'name' => __('Instagram Posts'),
                 'singular_name' => __('Instagram Post'),
@@ -147,7 +149,7 @@ class Instagram_Import {
             'public' => true,
             'has_archive' => true,
             'supports' => array('title', 'editor', 'thumbnail', 'custom-fields'),
-            'taxonomies' => array('instagram_tag'),
+            'taxonomies' => array($this->tag_taxonomy),
             'menu_icon' => 'dashicons-instagram',
             'show_in_rest' => true,
         ));
@@ -155,7 +157,7 @@ class Instagram_Import {
 
     public function add_admin_menu() {
         add_submenu_page(
-            'edit.php?post_type=instagram_post',
+            'edit.php?post_type=' . $this->post_type,
             __('Import Instagram Data'),
             __('Import Data'),
             'manage_options',
@@ -577,7 +579,7 @@ class Instagram_Import {
 
             // Check if post already exists - only within instagram_post type
             $existing_posts = get_posts(array(
-                'post_type' => 'instagram_post',
+                'post_type' => $this->post_type,
                 'posts_per_page' => 1,
                 'post_status' => 'any', // Check all statuses
                 'meta_query' => array(
@@ -617,16 +619,16 @@ class Instagram_Import {
             
             // Convert hashtags to links
             foreach ($hashtags as $tag) {
-                $term = get_term_by('name', $tag, 'instagram_tag');
+                $term = get_term_by('name', $tag, $this->tag_taxonomy);
                 if (!$term) {
-                    $term_result = wp_insert_term($tag, 'instagram_tag');
+                    $term_result = wp_insert_term($tag, $this->tag_taxonomy);
                     if (is_wp_error($term_result)) {
                         continue;
                     }
-                    $term = get_term($term_result['term_id'], 'instagram_tag');
+                    $term = get_term($term_result['term_id'], $this->tag_taxonomy);
                 }
                 
-                $tag_link = get_term_link($term, 'instagram_tag');
+                $tag_link = get_term_link($term, $this->tag_taxonomy);
                 if (!is_wp_error($tag_link)) {
                     $caption = str_replace(
                         '#' . $tag,
@@ -651,7 +653,7 @@ class Instagram_Import {
                 'post_content' => $caption,
                 'post_status' => 'publish',
                 'post_author' => get_current_user_id(),
-                'post_type' => 'instagram_post',
+                'post_type' => $this->post_type,
                 'post_date' => date('Y-m-d H:i:s', $post['timestamp'])
             );
             
@@ -663,7 +665,7 @@ class Instagram_Import {
                 
                 // Add hashtags
                 if (!empty($hashtags)) {
-                    wp_set_object_terms($post_id, $hashtags, 'instagram_tag', true);
+                    wp_set_object_terms($post_id, $hashtags, $this->tag_taxonomy, true);
                 }
                 
                 foreach ($post['images'] as $image_path) {
