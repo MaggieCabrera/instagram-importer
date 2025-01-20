@@ -575,10 +575,11 @@ class Instagram_Import {
                 continue;
             }
 
-            // Check if post already exists
+            // Check if post already exists - only within instagram_post type
             $existing_posts = get_posts(array(
                 'post_type' => 'instagram_post',
                 'posts_per_page' => 1,
+                'post_status' => 'any', // Check all statuses
                 'meta_query' => array(
                     array(
                         'key' => '_instagram_timestamp',
@@ -589,6 +590,7 @@ class Instagram_Import {
             ));
 
             if (!empty($existing_posts)) {
+                error_log('Instagram Import: Skipping duplicate Instagram post with timestamp: ' . $post['timestamp']);
                 $skipped++;
                 continue;
             }
