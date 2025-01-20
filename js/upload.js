@@ -2,7 +2,7 @@ jQuery(document).ready(function($) {
     console.log('Instagram Import JS loaded');
     
     const form = $('#instagram-upload-form');
-    const fileInput = $('#instagram_zip');
+    const fileInput = $('#instagram_export');
     const uploadProgress = $('#upload-progress');
     const uploadProgressFill = uploadProgress.find('.progress-bar-fill');
     const uploadProgressText = uploadProgress.find('.progress-text');
@@ -134,10 +134,10 @@ jQuery(document).ready(function($) {
                     importProgressText.text(data.progress + '%');
                     importStatusText.text(data.message);
 
-                    if (data.status === 'complete') {
-                        setTimeout(function() {
-                            location.reload();
-                        }, 2000);
+                    if (data.status === 'complete') {         
+                        // Reset form
+                        form[0].reset();
+                        uploadProgress.hide();
                     } else {
                         checkStatus(data.status);
                     }

@@ -19,44 +19,46 @@ class Instagram_Import {
     private $temp_dir;
     private $post_type = 'instagram_post';
     private $tag_taxonomy = 'instagram_tag';
+    private $timestamp_meta_key = '_instagram_timestamp';
+    private $temp_dir_name = 'instagram-import-temp';
+    private $json_file_path = 'your_instagram_activity/content/posts_1.json';
 
     public function __construct() {
-        // Set chunk size to be much smaller - 2MB
         $this->chunk_size = 2 * 1024 * 1024; // 2MB chunks
 
+        $this->setup_hooks();
+        $this->setup_directories();
+    }
+
+    private function setup_hooks() {
         add_action('init', array($this, 'register_post_type'));
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_ajax_upload_chunk', array($this, 'handle_chunk_upload'));
         add_action('wp_ajax_process_completed_upload', array($this, 'process_completed_upload'));
-        
-        // Set up temp directory
+        register_deactivation_hook(__FILE__, array($this, 'handle_deactivation'));
+    }
+
+    private function setup_directories() {
         $upload_dir = wp_upload_dir();
-        $this->temp_dir = $upload_dir['basedir'] . '/instagram-import-temp';
+        $this->temp_dir = $upload_dir['basedir'] . '/' . $this->temp_dir_name;
         
-        // Create temp directory with proper permissions
-        if (!file_exists($this->temp_dir)) {
-            if (!wp_mkdir_p($this->temp_dir)) {
-                error_log('Instagram Import: Failed to create temp directory: ' . $this->temp_dir);
+        $this->create_directory($this->temp_dir);
+        $this->create_directory(plugin_dir_path(__FILE__) . 'js');
+        $this->create_directory(plugin_dir_path(__FILE__) . 'css');
+    }
+
+    private function create_directory($dir) {
+        if (!file_exists($dir)) {
+            if (!wp_mkdir_p($dir)) {
+                error_log("Instagram Import: Failed to create directory: $dir");
             } else {
-                // Set directory permissions to 0755
-                chmod($this->temp_dir, 0755);
+                chmod($dir, 0755);
             }
         }
 
-        // Verify temp directory is writable
-        if (!is_writable($this->temp_dir)) {
-            error_log('Instagram Import: Temp directory is not writable: ' . $this->temp_dir);
-        }
-
-        // Create js and css directories if they don't exist
-        $js_dir = plugin_dir_path(__FILE__) . 'js';
-        $css_dir = plugin_dir_path(__FILE__) . 'css';
-        if (!file_exists($js_dir)) {
-            wp_mkdir_p($js_dir);
-        }
-        if (!file_exists($css_dir)) {
-            wp_mkdir_p($css_dir);
+        if (!is_writable($dir)) {
+            error_log("Instagram Import: Directory is not writable: $dir");
         }
     }
 
@@ -114,23 +116,7 @@ class Instagram_Import {
 
     public function register_post_type() {
         register_taxonomy($this->tag_taxonomy, $this->post_type, array(
-            'labels' => array(
-                'name' => __('Instagram Tags'),
-                'singular_name' => __('Instagram Tag'),
-                'menu_name' => __('Tags'),
-                'all_items' => __('All Tags'),
-                'edit_item' => __('Edit Tag'),
-                'view_item' => __('View Tag'),
-                'update_item' => __('Update Tag'),
-                'add_new_item' => __('Add New Tag'),
-                'new_item_name' => __('New Tag Name'),
-                'search_items' => __('Search Tags'),
-                'popular_items' => __('Popular Tags'),
-                'separate_items_with_commas' => __('Separate tags with commas'),
-                'add_or_remove_items' => __('Add or remove tags'),
-                'choose_from_most_used' => __('Choose from the most used tags'),
-                'not_found' => __('No tags found')
-            ),
+            'labels' => $this->get_taxonomy_labels(),
             'public' => true,
             'hierarchical' => false,
             'show_ui' => true,
@@ -142,10 +128,7 @@ class Instagram_Import {
         ));
 
         register_post_type($this->post_type, array(
-            'labels' => array(
-                'name' => __('Instagram Posts'),
-                'singular_name' => __('Instagram Post'),
-            ),
+            'labels' => $this->get_post_type_labels(),
             'public' => true,
             'has_archive' => true,
             'supports' => array('title', 'editor', 'thumbnail', 'custom-fields'),
@@ -167,6 +150,7 @@ class Instagram_Import {
     }
 
     public function render_import_page() {
+
         if (isset($_POST['import'])) {
             $upload_dir = wp_upload_dir();
             $temp_dir = $upload_dir['basedir'] . '/instagram-import-temp';
@@ -184,7 +168,7 @@ class Instagram_Import {
                     $unzip_path = $upload_path . '-extracted';
                     unzip_file($upload_path, $unzip_path);
                     
-                    $posts_file = $unzip_path . '/your_instagram_activity/content/posts_1.json';
+                    $posts_file = $unzip_path . '/' . $this->json_file_path;
                     
                     if (file_exists($posts_file)) {
                         $posts = $this->parse_instagram_posts($unzip_path);
@@ -205,9 +189,9 @@ class Instagram_Import {
             <form method="post" enctype="multipart/form-data" id="instagram-upload-form">
                 <table class="form-table">
                     <tr>
-                        <th scope="row"><label for="instagram_zip">Instagram Export ZIP</label></th>
+                        <th scope="row"><label for="instagram_export">Instagram Export ZIP</label></th>
                         <td>
-                            <input type="file" name="instagram_zip" id="instagram_zip" accept=".zip" required>
+                            <input type="file" name="instagram_export" id="instagram_export" accept=".zip" required>
                             <p class="description">Upload your Instagram data export ZIP file</p>
                             <div id="upload-progress" style="display: none; margin-top: 10px;">
                                 <div class="status-text upload-status"></div>
@@ -226,7 +210,7 @@ class Instagram_Import {
                         </td>
                     </tr>
                 </table>
-                <?php submit_button('Import', 'primary', 'import'); ?>
+                <?php submit_button('Import', 'primary', 'import', false); ?>
             </form>
         </div>
         <?php
@@ -504,9 +488,7 @@ class Instagram_Import {
 
             $path = $this->temp_dir . '/' . $item;
             
-            // If it's older than 1 hour, remove it
-            if (filemtime($path) < time() - 3600) {
-                error_log('Instagram Import: Removing old temp file/directory: ' . $path);
+            if(filemtime($path) < time() - 3600) {
                 if (is_dir($path)) {
                     $this->cleanup_temp_files($path);
                 } else {
@@ -518,7 +500,7 @@ class Instagram_Import {
 
     private function parse_instagram_posts($dir_path) {
         $posts = array();
-        $media_path = $dir_path . '/your_instagram_activity/content/posts_1.json';
+        $media_path = $dir_path . '/' . $this->json_file_path;
         
         if (!file_exists($media_path)) {
             error_log('Instagram Import: Posts JSON file not found at: ' . $media_path);
@@ -543,10 +525,6 @@ class Instagram_Import {
             }
 
             $post = array();
-            $post['caption'] = isset($item['title']) ? $item['title'] : '';
-            $post['timestamp'] = isset($item['creation_timestamp']) 
-                ? intval($item['creation_timestamp']) 
-                : null;
             
             $post['images'] = array();
             if (isset($item['media']) && is_array($item['media'])) {
@@ -554,6 +532,8 @@ class Instagram_Import {
                     if (isset($media['uri'])) {
                         $post['images'][] = $media['uri'];
                     }
+                    $post['caption'] = isset($media['title']) ? $media['title'] : '';
+                    $post['timestamp'] = isset($media['creation_timestamp']) ? intval($media['creation_timestamp']) : null;
                 }
             }
             
@@ -569,22 +549,24 @@ class Instagram_Import {
         $imported = 0;
         $skipped = 0;
         
+        error_log('Instagram Import: Starting import of ' . count($posts) . ' posts');
+        
         foreach ($posts as $post) {
-            // Skip if no timestamp (required for duplicate checking)
+            // Skip if no timestamp
             if (empty($post['timestamp'])) {
-                error_log('Instagram Import: Skipping post without timestamp');
+                error_log('Instagram Import: Skipping post - Missing timestamp');
                 $skipped++;
                 continue;
             }
 
-            // Check if post already exists - only within instagram_post type
+            // Check if post already exists
             $existing_posts = get_posts(array(
                 'post_type' => $this->post_type,
                 'posts_per_page' => 1,
-                'post_status' => 'any', // Check all statuses
+                'post_status' => 'any',
                 'meta_query' => array(
                     array(
-                        'key' => '_instagram_timestamp',
+                        'key' => $this->timestamp_meta_key,
                         'value' => $post['timestamp'],
                         'compare' => '='
                     )
@@ -592,7 +574,12 @@ class Instagram_Import {
             ));
 
             if (!empty($existing_posts)) {
-                error_log('Instagram Import: Skipping duplicate Instagram post with timestamp: ' . $post['timestamp']);
+                error_log(sprintf(
+                    'Instagram Import: Skipping post - Already exists (Post ID: %d, Timestamp: %s, Title: %s)',
+                    $existing_posts[0]->ID,
+                    $post['timestamp'],
+                    $existing_posts[0]->post_title
+                ));
                 $skipped++;
                 continue;
             }
@@ -639,13 +626,7 @@ class Instagram_Import {
             }
             
             // Clean up title - using WordPress native functions
-            $clean_title = !empty($caption) ? wp_trim_words($caption, 10) : 'Instagram Post';
-            // Remove emojis but preserve other UTF-8 characters
-            $clean_title = wp_encode_emoji($clean_title);
-            // Sanitize the title while preserving UTF-8 characters
-            $clean_title = sanitize_text_field($clean_title);
-            // Fallback if title is empty after cleaning
-            $clean_title = $clean_title ?: 'Instagram Post';
+            $clean_title = !empty($caption) ? sanitize_text_field($caption) : 'Instagram Post';
             
             // Create post with UTF-8 support
             $post_data = array(
@@ -657,49 +638,116 @@ class Instagram_Import {
                 'post_date' => date('Y-m-d H:i:s', $post['timestamp'])
             );
             
-            $post_id = wp_insert_post($post_data);
+            $post_id = $this->create_post($post_data, $hashtags, $post['images'], $export_path);
             
-            if ($post_id && !empty($post['images'])) {
-                // Store timestamp
-                update_post_meta($post_id, '_instagram_timestamp', $post['timestamp']);
-                
-                // Add hashtags
-                if (!empty($hashtags)) {
-                    wp_set_object_terms($post_id, $hashtags, $this->tag_taxonomy, true);
-                }
-                
-                foreach ($post['images'] as $image_path) {
-                    $full_path = $export_path . '/' . $image_path;
-                    
-                    if (file_exists($full_path)) {
-                        $file_array = array(
-                            'name' => basename($image_path),
-                            'tmp_name' => $full_path
-                        );
-                        
-                        $attach_id = media_handle_sideload($file_array, $post_id);
-                        
-                        if (!is_wp_error($attach_id)) {
-                            if (!has_post_thumbnail($post_id)) {
-                                set_post_thumbnail($post_id, $attach_id);
-                            }
-                        } else {
-                            error_log('Instagram Import: Failed to attach image: ' . $attach_id->get_error_message());
-                        }
-                    } else {
-                        error_log('Instagram Import: Image file not found: ' . $full_path);
-                    }
-                }
+            if ($post_id) {
+                error_log(sprintf(
+                    'Instagram Import: Successfully imported post (Post ID: %d, Timestamp: %s)',
+                    $post_id,
+                    $post['timestamp']
+                ));
                 $imported++;
             } else {
-                error_log('Instagram Import: Failed to create post or no images found. Post ID: ' . $post_id);
+                error_log(sprintf(
+                    'Instagram Import: Skipping post - Creation failed (Timestamp: %s)',
+                    $post['timestamp']
+                ));
+                $skipped++;
             }
         }
+        
+        error_log(sprintf(
+            'Instagram Import: Import complete. Total: %d, Imported: %d, Skipped: %d',
+            count($posts),
+            $imported,
+            $skipped
+        ));
         
         return array(
             'imported' => $imported,
             'skipped' => $skipped
         );
+    }
+
+    private function create_post($post_data, $hashtags, $images, $export_path) {
+        $post_id = wp_insert_post($post_data);
+        
+        if (!$post_id || is_wp_error($post_id)) {
+            error_log('Instagram Import: Failed to create post: ' . 
+                (is_wp_error($post_id) ? $post_id->get_error_message() : 'Unknown error'));
+            return false;
+        }
+
+        update_post_meta($post_id, $this->timestamp_meta_key, $post_data['timestamp']);
+        
+        if (!empty($hashtags)) {
+            wp_set_object_terms($post_id, $hashtags, $this->tag_taxonomy, true);
+        }
+
+        $this->process_images($post_id, $images, $export_path);
+        
+        return $post_id;
+    }
+
+    private function process_images($post_id, $images, $export_path) {
+        foreach ($images as $image_path) {
+            $full_path = $export_path . '/' . $image_path;
+            
+            if (!file_exists($full_path)) {
+                error_log('Instagram Import: Image file not found: ' . $full_path);
+                continue;
+            }
+
+            $attach_id = media_handle_sideload([
+                'name' => basename($image_path),
+                'tmp_name' => $full_path
+            ], $post_id);
+            
+            if (!is_wp_error($attach_id)) {
+                if (!has_post_thumbnail($post_id)) {
+                    set_post_thumbnail($post_id, $attach_id);
+                }
+            } else {
+                error_log('Instagram Import: Failed to attach image: ' . $attach_id->get_error_message());
+            }
+        }
+    }
+
+    private function get_taxonomy_labels() {
+        return array(
+            'name' => __('Instagram Tags'),
+            'singular_name' => __('Instagram Tag'),
+            'menu_name' => __('Tags'),
+            'all_items' => __('All Tags'),
+            'edit_item' => __('Edit Tag'),
+            'view_item' => __('View Tag'),
+            'update_item' => __('Update Tag'),
+            'add_new_item' => __('Add New Tag'),
+            'new_item_name' => __('New Tag Name'),
+            'search_items' => __('Search Tags'),
+            'popular_items' => __('Popular Tags'),
+            'separate_items_with_commas' => __('Separate tags with commas'),
+            'add_or_remove_items' => __('Add or remove tags'),
+            'choose_from_most_used' => __('Choose from the most used tags'),
+            'not_found' => __('No tags found')
+        );
+    }
+
+    private function get_post_type_labels() {
+        return array(
+            'name' => __('Instagram Posts'),
+            'singular_name' => __('Instagram Post')
+        );
+    }
+
+    public function handle_deactivation() {
+        // Clean up the entire temp directory
+        if (is_dir($this->temp_dir)) {
+            error_log('Instagram Import: Cleaning up temp directory on deactivation: ' . $this->temp_dir);
+            $this->cleanup_temp_files($this->temp_dir);
+            // Remove the temp directory itself
+            @rmdir($this->temp_dir);
+        }
     }
 }
 
