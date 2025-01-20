@@ -24,51 +24,52 @@ jQuery(document).ready(function($) {
         
         const file = fileInput[0].files[0];
         if (!file) {
-            alert('Please select a file');
+            alert('Please select a file to upload');
             return;
         }
 
-        // Reset and show progress bars
+        const chunkSize = parseInt(instagramImport.chunk_size);
+        if (!chunkSize || chunkSize <= 0) {
+            alert('Invalid chunk size configuration');
+            return;
+        }
+
+        console.log('Starting upload with chunk size:', chunkSize, 'bytes');
+        console.log('Total file size:', file.size, 'bytes');
+
         uploadProgress.show();
+        uploadStatusText.text('Starting upload...');
         uploadProgressFill.css('width', '0%');
         uploadProgressText.text('0%');
-        uploadStatusText.text('Preparing upload...');
-        
-        importProgress.hide();
-        importProgressFill.css('width', '0%');
-        importProgressText.text('0%');
-        importStatusText.text('');
 
-        // Generate unique upload ID
-        const uploadId = 'upload_' + Date.now();
-        
-        // Use a smaller chunk size - 1MB
-        const chunkSize = 1024 * 1024;
         const chunks = Math.ceil(file.size / chunkSize);
         let currentChunk = 0;
-        let retryCount = 0;
-        const maxRetries = 3;
 
-        console.log('Starting upload of', file.name, '(', file.size, 'bytes) in', chunks, 'chunks of', chunkSize, 'bytes each');
+        // Generate a single upload ID for all chunks
+        const upload_id = Date.now().toString();
+        console.log('Upload ID:', upload_id);
 
-        // Upload chunks
         function uploadChunk() {
             const start = currentChunk * chunkSize;
-            const end = Math.min(start + chunkSize, file.size);
+            // Ensure we don't exceed the chunk size limit
+            const chunkToSend = Math.min(chunkSize, file.size - start);
+            const end = start + chunkToSend;
             const chunk = file.slice(start, end);
-
-            console.log('Preparing chunk', currentChunk + 1, 'of', chunks, '(', chunk.size, 'bytes)');
-
+            
+            // Debug chunk size
+            console.log('Configured chunk size:', chunkSize, 'bytes');
+            console.log('Actual chunk size:', chunk.size, 'bytes');
+            console.log('Chunk number:', currentChunk + 1, 'of', chunks);
+            console.log('File position:', start, 'to', end, 'of', file.size);
+            
             const formData = new FormData();
             formData.append('action', 'upload_chunk');
             formData.append('nonce', instagramImport.nonce);
-            formData.append('chunk', chunk, 'chunk');
+            formData.append('chunk', chunk);
             formData.append('chunk_index', currentChunk);
             formData.append('total_chunks', chunks);
             formData.append('filename', file.name);
-            formData.append('upload_id', uploadId);
-
-            console.log('Sending chunk', currentChunk + 1);
+            formData.append('upload_id', upload_id); // Use the same upload_id for all chunks
 
             $.ajax({
                 url: instagramImport.ajaxurl,
@@ -77,66 +78,42 @@ jQuery(document).ready(function($) {
                 processData: false,
                 contentType: false,
                 success: function(response) {
-                    console.log('Server response for chunk', currentChunk + 1, ':', response);
-                    
-                    if (response.success) {
-                        // Reset retry count on success
-                        retryCount = 0;
+                    if (!response.success) {
+                        alert('Upload failed: ' + response.data);
+                        return;
+                    }
 
-                        // Update upload progress
-                        const progress = Math.round(((currentChunk + 1) / chunks) * 100);
-                        uploadProgressFill.css('width', progress + '%');
-                        uploadProgressText.text(progress + '%');
-                        uploadProgress.find('.progress-wrapper').attr('data-progress', progress);
-                        uploadStatusText.text('Uploading file... ' + (currentChunk + 1) + ' of ' + chunks + ' chunks');
+                    const progress = Math.round((currentChunk + 1) / chunks * 100);
+                    uploadProgressFill.css('width', progress + '%');
+                    uploadProgressText.text(progress + '%');
+                    uploadStatusText.text('Uploading chunk ' + (currentChunk + 1) + ' of ' + chunks);
 
-                        if (response.data.complete) {
-                            uploadStatusText.text('Upload complete. Processing file...');
-                            importProgress.show();
-                            importStatusText.text('Extracting files...');
-                            importProgressFill.css('width', '33%');
-                            importProgressText.text('33%');
-                            importProgress.find('.progress-wrapper').attr('data-progress', '33');
-                            processUpload(uploadId);
-                        } else if (currentChunk < chunks - 1) {
-                            currentChunk++;
-                            setTimeout(uploadChunk, 100); // Add small delay between chunks
-                        }
+                    if (response.data.complete) {
+                        uploadStatusText.text('Upload complete, processing...');
+                        processUpload(response.data.upload_id);
                     } else {
-                        console.error('Upload failed:', response.data);
-                        handleError('Upload failed: ' + response.data);
+                        currentChunk++;
+                        if (currentChunk < chunks) {
+                            uploadChunk();
+                        }
                     }
                 },
                 error: function(xhr, status, error) {
-                    console.error('Upload error for chunk', currentChunk + 1, ':', {
-                        status: status,
-                        error: error,
-                        response: xhr.responseText
-                    });
-                    handleError('Upload failed. ' + (xhr.responseText || error));
+                    alert('Upload failed: ' + error);
                 }
             });
         }
 
-        function handleError(message) {
-            if (retryCount < maxRetries) {
-                retryCount++;
-                console.log('Retrying chunk', currentChunk + 1, 'attempt', retryCount, 'of', maxRetries);
-                uploadStatusText.text('Retrying... Attempt ' + retryCount + ' of ' + maxRetries);
-                setTimeout(uploadChunk, 1000 * retryCount); // Exponential backoff
-            } else {
-                alert(message + '\nMax retries exceeded. Please try again.');
-                // Reset the form
-                uploadProgress.hide();
-                importProgress.hide();
-                uploadProgressFill.css('width', '0%');
-                uploadProgressText.text('0%');
-                uploadStatusText.text('');
-            }
-        }
+        uploadChunk();
+    });
 
-        function processUpload(uploadId, status = 'start') {
-            console.log('Processing upload', uploadId, 'with status', status);
+    function processUpload(uploadId) {
+        importProgress.show();
+        importStatusText.text('Processing upload...');
+        importProgressFill.css('width', '0%');
+        importProgressText.text('0%');
+
+        function checkStatus(status = 'start') {
             $.ajax({
                 url: instagramImport.ajaxurl,
                 type: 'POST',
@@ -147,52 +124,30 @@ jQuery(document).ready(function($) {
                     status: status
                 },
                 success: function(response) {
-                    console.log('Process response:', response);
-                    if (response.success) {
-                        // Update progress bar
-                        importProgressFill.css('width', response.data.progress + '%');
-                        importProgressText.text(response.data.progress + '%');
-                        importProgress.find('.progress-wrapper').attr('data-progress', response.data.progress);
-                        importStatusText.text(response.data.message);
-
-                        // Continue processing based on status
-                        if (response.data.status === 'extracting') {
-                            setTimeout(function() {
-                                processUpload(uploadId, 'extracting');
-                            }, 1000);
-                        } else if (response.data.status === 'importing') {
-                            setTimeout(function() {
-                                processUpload(uploadId, 'importing');
-                            }, 1000);
-                        } else if (response.data.status === 'complete') {
-                            // Update progress UI to 100%
-                            importProgressFill.css('width', '100%');
-                            importProgressText.text('100%');
-                            importProgress.find('.progress-wrapper').attr('data-progress', '100');
-                            importStatusText.text(response.data.message);
-                            
-                            // Just reset the file input but keep the progress visible
-                            fileInput.val('');
-                        }
-                    } else {
-                        console.error('Processing failed:', response.data);
-                        importStatusText.text('Processing failed: ' + response.data);
+                    if (!response.success) {
                         alert('Processing failed: ' + response.data);
+                        return;
+                    }
+
+                    const data = response.data;
+                    importProgressFill.css('width', data.progress + '%');
+                    importProgressText.text(data.progress + '%');
+                    importStatusText.text(data.message);
+
+                    if (data.status === 'complete') {
+                        setTimeout(function() {
+                            location.reload();
+                        }, 2000);
+                    } else {
+                        checkStatus(data.status);
                     }
                 },
                 error: function(xhr, status, error) {
-                    console.error('Processing error:', {
-                        status: status,
-                        error: error,
-                        response: xhr.responseText
-                    });
-                    importStatusText.text('Processing failed');
-                    alert('Processing failed: ' + (xhr.responseText || error));
+                    alert('Processing failed: ' + error);
                 }
             });
         }
 
-        // Start upload
-        uploadChunk();
-    });
+        checkStatus();
+    }
 }); 
