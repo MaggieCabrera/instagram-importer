@@ -1,6 +1,4 @@
 jQuery(document).ready(function($) {
-    console.log('Instagram Import JS loaded');
-    
     const form = $('#instagram-upload-form');
     const fileInput = $('#instagram_export');
     const uploadProgress = $('#upload-progress');
@@ -14,12 +12,10 @@ jQuery(document).ready(function($) {
     const importStatusText = importProgress.find('.import-status');
 
     if (form.length === 0) {
-        console.error('Form not found');
         return;
     }
 
     form.on('submit', function(e) {
-        console.log('Form submit intercepted');
         e.preventDefault();
         
         const file = fileInput[0].files[0];
@@ -34,9 +30,6 @@ jQuery(document).ready(function($) {
             return;
         }
 
-        console.log('Starting upload with chunk size:', chunkSize, 'bytes');
-        console.log('Total file size:', file.size, 'bytes');
-
         uploadProgress.show();
         uploadStatusText.text('Starting upload...');
         uploadProgressFill.css('width', '0%');
@@ -45,22 +38,13 @@ jQuery(document).ready(function($) {
         const chunks = Math.ceil(file.size / chunkSize);
         let currentChunk = 0;
 
-        // Generate a single upload ID for all chunks
         const upload_id = Date.now().toString();
-        console.log('Upload ID:', upload_id);
 
         function uploadChunk() {
             const start = currentChunk * chunkSize;
-            // Ensure we don't exceed the chunk size limit
             const chunkToSend = Math.min(chunkSize, file.size - start);
             const end = start + chunkToSend;
             const chunk = file.slice(start, end);
-            
-            // Debug chunk size
-            console.log('Configured chunk size:', chunkSize, 'bytes');
-            console.log('Actual chunk size:', chunk.size, 'bytes');
-            console.log('Chunk number:', currentChunk + 1, 'of', chunks);
-            console.log('File position:', start, 'to', end, 'of', file.size);
             
             const formData = new FormData();
             formData.append('action', 'upload_chunk');
@@ -69,7 +53,7 @@ jQuery(document).ready(function($) {
             formData.append('chunk_index', currentChunk);
             formData.append('total_chunks', chunks);
             formData.append('filename', file.name);
-            formData.append('upload_id', upload_id); // Use the same upload_id for all chunks
+            formData.append('upload_id', upload_id);
 
             $.ajax({
                 url: instagramImport.ajaxurl,
@@ -135,7 +119,6 @@ jQuery(document).ready(function($) {
                     importStatusText.text(data.message);
 
                     if (data.status === 'complete') {         
-                        // Reset form
                         form[0].reset();
                         uploadProgress.hide();
                     } else {
