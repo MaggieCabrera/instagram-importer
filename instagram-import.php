@@ -106,8 +106,6 @@ class Instagram_Import {
                 $this->chunk_size
             )
         ));
-
-        wp_add_inline_script('instagram-import', 'console.log("Instagram Import plugin initialized with chunk size: " + instagramImport.chunk_size + " bytes");', 'before');
     }
 
     public function register_post_type() {
